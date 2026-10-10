@@ -43,7 +43,7 @@ class ModelLibrary(context: Context) {
         }
     }
 
-    fun import(uri: Uri): LocalModel {
+    fun register(uri: Uri): LocalModel {
         appContext.contentResolver.takePersistableUriPermission(
             uri,
             android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
