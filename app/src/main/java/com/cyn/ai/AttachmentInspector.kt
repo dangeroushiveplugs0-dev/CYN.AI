@@ -36,6 +36,8 @@ data class FileInspection(
 object AttachmentInspector {
     private const val MAX_TEXT_BYTES = 48 * 1024
     private const val MAX_ARCHIVE_ENTRIES = 80
+    private const val MAX_PDF_BYTES = 24L * 1024L * 1024L
+    private const val MAX_PDF_PAGES = 12
 
     fun inspect(context: Context, uri: Uri): FileInspection {
         val resolver = context.contentResolver
@@ -68,7 +70,7 @@ object AttachmentInspector {
             ext in setOf("mp3", "wav", "m4a", "ogg", "flac", "aac", "opus") ->
                 FileInspection(name, mime, size, "Audio", "Audio attachment detected. Transcription or audio understanding requires a compatible audio model/runtime.")
             ext == "pdf" ->
-                FileInspection(name, mime, size, "PDF document", "PDF detected. Text/page extraction is not implemented yet; the file is retained as an attachment for a future document parser.")
+                inspectPdf(context, resolver.openInputStream(uri), name, mime, size)
             ext in setOf("blend", "fbx", "dae", "stl", "ply", "usd", "usdz", "3mf") ->
                 FileInspection(name, mime, size, "3D asset", "3D asset detected. This pass records file metadata only; geometry/material inspection requires a format parser.")
             ext in setOf("gguf", "bin", "safetensors", "onnx", "pt", "pth", "tflite") ->
@@ -164,6 +166,59 @@ object AttachmentInspector {
             normalized.matches(Regex("ppt/slides/slide[0-9]+\\.xml")) ||
             normalized == "content.xml" ||
             normalized == "meta.xml"
+    }
+
+    private fun inspectPdf(context: Context, stream: java.io.InputStream?, name: String, mime: String, size: Long): FileInspection {
+        if (size > MAX_PDF_BYTES) {
+            stream?.close()
+            return FileInspection(name, mime, size, "PDF document", "PDF is larger than the safe local extraction limit of 24 MiB. It is retained as an attachment, but this pass skips text extraction to limit memory and storage use.")
+        }
+        val temp = runCatching {
+            val file = java.io.File.createTempFile("cyn-pdf-", ".pdf", context.cacheDir)
+            val copied = stream?.use { input ->
+                file.outputStream().use { output ->
+                    val buffer = ByteArray(8192)
+                    var total = 0L
+                    while (true) {
+                        val count = input.read(buffer)
+                        if (count <= 0) break
+                        total += count
+                        if (total > MAX_PDF_BYTES) throw IllegalArgumentException("PDF exceeds safe extraction limit")
+                        output.write(buffer, 0, count)
+                    }
+                    total
+                }
+            } ?: 0L
+            file to copied
+        }.getOrElse {
+            stream?.close()
+            return FileInspection(name, mime, size, "PDF document", "Could not safely stage PDF for text extraction: ${it.javaClass.simpleName}. The original attachment remains untouched.")
+        }
+        return try {
+            org.apache.pdfbox.android.PDFBoxResourceLoader.init(context.applicationContext)
+            org.apache.pdfbox.pdmodel.PDDocument.load(temp.first).use { document ->
+                val pages = document.numberOfPages
+                if (pages == 0) {
+                    FileInspection(name, mime, size, "PDF document", "PDF opened, but it contains no pages.")
+                } else {
+                    val stripper = org.apache.pdfbox.text.PDFTextStripper().apply {
+                        startPage = 1
+                        endPage = minOf(pages, MAX_PDF_PAGES)
+                    }
+                    val extracted = stripper.getText(document).take(12000)
+                    val pageNote = "Read text from ${minOf(pages, MAX_PDF_PAGES)} of $pages page(s), capped at 12,000 characters."
+                    FileInspection(
+                        name, mime, if (size >= 0L) size else temp.second, "PDF document",
+                        if (extracted.isBlank()) "PDF opened successfully, but no extractable text was found. It may be scanned or image-based. $pageNote" else "PDF text extracted locally. $pageNote",
+                        extracted
+                    )
+                }
+            }
+        } catch (error: Exception) {
+            FileInspection(name, mime, size, "PDF document", "PDF text extraction failed safely: ${error.javaClass.simpleName}. Scanned pages still require OCR.")
+        } finally {
+            temp.first.delete()
+        }
     }
 
     private fun inspectGlb(stream: java.io.InputStream?, name: String, mime: String, size: Long): FileInspection {
