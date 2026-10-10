@@ -234,8 +234,8 @@ private fun CynHome() {
                 modifier = Modifier.fillMaxWidth().background(Color(0xFF1B1D20), RoundedCornerShape(24.dp)).padding(start = 4.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                IconButton(onClick = { filePicker.launch(arrayOf("image/*")) }) {
-                    Icon(Icons.Default.Image, contentDescription = "Attach image", tint = Color(0xFFB7F36B))
+                IconButton(onClick = { filePicker.launch(arrayOf("*/*")) }) {
+                    Icon(Icons.Default.AttachFile, contentDescription = "Attach any file", tint = Color(0xFFB7F36B))
                 }
                 OutlinedTextField(
                     value = draft,
