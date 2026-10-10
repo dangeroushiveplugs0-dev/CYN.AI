@@ -50,6 +50,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -82,6 +83,10 @@ private fun CynHome() {
     var pickedFile by remember { mutableStateOf<Uri?>(null) }
     var pickedName by remember { mutableStateOf<String?>(null) }
     var showModels by remember { mutableStateOf(false) }
+    var libraryMessage by remember { mutableStateOf<String?>(null) }
+    val context = LocalContext.current
+    val library = remember { ModelLibrary(context) }
+    val models = remember { mutableStateListOf<LocalModel>().apply { addAll(library.list()) } }
     val messages = remember {
         mutableStateListOf(
             ChatMessage("CYN is ready for its first build. Local model inference is the next integration milestone.", false)
@@ -92,8 +97,29 @@ private fun CynHome() {
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            pickedFile = uri
-            pickedName = uri.lastPathSegment?.substringAfterLast('/') ?: "Selected file"
+            val displayName = runCatching {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val column = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (cursor.moveToFirst() && column >= 0) cursor.getString(column) else null
+                }
+            }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Selected file"
+            if (displayName.lowercase().endsWith(".gguf")) {
+                runCatching { library.import(uri) }
+                    .onSuccess { model ->
+                        models.removeAll { it.uri == model.uri }
+                        models.add(model)
+                        libraryMessage = "Registered ${model.name}. Local inference is not connected yet."
+                    }
+                    .onFailure { libraryMessage = "Couldn't keep access to this file. Select it again." }
+            } else {
+                pickedFile = uri
+                pickedName = displayName
+                runCatching {
+                    context.contentResolver.takePersistableUriPermission(
+                        uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                }
+            }
         }
     }
 
@@ -137,7 +163,27 @@ private fun CynHome() {
                         }
                         Text("Coding: Qwen2.5-Coder 3B Q8_0", fontSize = 12.sp)
                         Text("Vision: SmolVLM2 500M F16 / 2.2B Q6_K", fontSize = 12.sp)
-                        Text("Model loading is not wired yet; this panel records the first UI foundation.", fontSize = 11.sp, color = Color.LightGray)
+                        if (models.isEmpty()) {
+                            Text("No GGUF models registered yet.", fontSize = 12.sp, color = Color.LightGray)
+                        }
+                        models.forEach { model ->
+                            Row(
+                                modifier = Modifier.fillMaxWidth().background(Color(0xFF24282A), RoundedCornerShape(10.dp)).padding(start = 10.dp, end = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
+                                    Text(model.name, fontSize = 12.sp)
+                                    Text(model.sizeLabel, fontSize = 10.sp, color = Color.LightGray)
+                                }
+                                IconButton(onClick = {
+                                    library.remove(model)
+                                    models.remove(model)
+                                    libraryMessage = "Removed from CYN's list; original file was not deleted."
+                                }) { Text("×", fontSize = 18.sp) }
+                            }
+                        }
+                        Text("Registered models are remembered, but not loaded for inference yet.", fontSize = 11.sp, color = Color.LightGray)
+                        libraryMessage?.let { Text(it, fontSize = 11.sp, color = Color(0xFFB7F36B)) }
                     }
                 }
             }
