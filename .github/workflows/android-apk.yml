@@ -29,14 +29,25 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Install Android command-line tools
+        shell: bash
+        run: |
+          SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          mkdir -p "$SDK_ROOT/cmdline-tools/latest" /tmp/android-cli
+          curl -fsSL "https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip" -o /tmp/android-cli.zip
+          unzip -q /tmp/android-cli.zip -d /tmp/android-cli
+          cp -a /tmp/android-cli/cmdline-tools/. "$SDK_ROOT/cmdline-tools/latest/"
+          echo "$SDK_ROOT/cmdline-tools/latest/bin" >> "$GITHUB_PATH"
+          echo "ANDROID_HOME=$SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK_ROOT" >> "$GITHUB_ENV"
+
       - name: Install native toolchain
         shell: bash
         run: |
           SDK_ROOT="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
-          SDKMANAGER="$SDK_ROOT/cmdline-tools/16.0/bin/sdkmanager"
-          echo "$SDK_ROOT/cmdline-tools/16.0/bin" >> "$GITHUB_PATH"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
           yes | "$SDKMANAGER" --licenses >/dev/null || true
-          "$SDKMANAGER" "ndk;29.0.13113456" "cmake;3.31.6"
+          "$SDKMANAGER" "platform-tools" "platforms;android-35" "build-tools;35.0.0" "ndk;29.0.13113456" "cmake;3.31.6"
 
       - name: Configure llama.cpp Android library
         shell: bash
