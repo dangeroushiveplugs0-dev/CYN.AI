@@ -2,46 +2,43 @@
 
 **CYN** is a mobile-first, local-first AI assistant for Android, named after Cyn from *Murder Drones*.
 
-The goal is a compact chat app that runs open-weight models on-device, prioritizes coding help, understands images, and grows through modular tools such as a user-approved GitHub workspace connector. The core app should not require a paid API.
+The goal is a compact chat app that runs open-weight models on-device, prioritizes coding help, understands supported attachments, and grows through modular tools such as a user-approved GitHub workspace connector. The core app does not require a paid API.
 
-## Current status
+## Current implementation
 
-The initial Android foundation and GitHub Actions APK workflow are in place. This is a **UI/build milestone**, not a claim that local inference is already integrated.
-
-### Design goals
-- Android-first, small modular files, and GitHub Actions APK builds.
-- Local GGUF model import and model switching.
-- Coding model and vision model roles, loaded on demand rather than all at once.
-- Image attachments from the start; video understanding only when the chosen runtime/model supports it.
-- Local chat history and clear generation/progress feedback.
-- Optional modular tools. GitHub write actions must require user confirmation.
-- No bundled multi-gigabyte model files in the source repository.
+- Kotlin + Jetpack Compose Android chat UI.
+- GGUF model registration through Android's document picker.
+- Local file inspection for supported text, code, archives, PDF text, and file metadata.
+- **llama.cpp Android JNI runtime integration in progress**: CI checks out a pinned upstream revision, builds its native CPU runtime for ARM64, and the chat adapter stages imported GGUFs into app-private storage before loading them.
+- Token streaming from the inference engine into the assistant message.
+- The build must pass and a real model must be tested on-device before this integration is considered validated. This repository cannot verify a model load or memory use on your phone.
 
 ## Models you already have
 
-These are registered as candidates; runtime compatibility and device memory use still need testing:
+These are candidates, not a guarantee that every file will load or fit in available RAM:
 
 | File | Intended role | Notes |
 |---|---|---|
-| `qwen2.5-coder-3b-instruct-q8_0.gguf` | Coding/chat | Q8 quantization is memory-heavy for a phone; check available memory before loading. |
-| `SmolVLM2-500M-Video-Instruct-f16.gguf` | Lightweight vision/video candidate | Video support depends on the exact model packaging and runtime integration. F16 may use substantial RAM. |
-| `SmolVLM2-2.2B-Instruct.i1-Q6_K.gguf` | Image/vision candidate | Larger and more memory-intensive; it may require compatible multimodal runtime/projector components. |
+| `qwen2.5-coder-3b-instruct-q8_0.gguf` | Coding/chat | Q8 quantization is memory-heavy on a phone. A 3B Q8 model may fail to load or be killed by Android if available RAM is insufficient. |
+| `SmolVLM2-500M-Video-Instruct-f16.gguf` | Vision/video candidate | Video support depends on the exact model packaging and compatible multimodal runtime integration. |
+| `SmolVLM2-2.2B-Instruct.i1-Q6_K.gguf` | Vision candidate | Multimodal models may need additional projector/vision components and a compatible runtime path. |
 
-The app should let you import files directly from Android storage. You do **not** need to upload the model binaries to this repository.
+Start by trying the smallest compatible text GGUF you have. Do not assume that successful file import means the model is compatible or memory-safe.
 
-## Large model files
+## Important runtime details
 
-Normal GitHub repository files are blocked above 100 MiB. Git LFS has per-file and free-quota limits, so it is not a good default distribution mechanism for these models. Keep model binaries outside the source repo; use Android's file picker for local import, and later add optional verified model download links.
+- The native build currently targets **ARM64 Android devices** to keep the APK and build scope smaller.
+- On first load, CYN copies the selected GGUF into its private app storage because the native engine loads from a filesystem path. Keep enough free storage for a second copy of the model.
+- Only one model is intended to be loaded at a time.
+- Attachment metadata/text is passed to the text model as prompt context. This does **not** yet mean the model can interpret raw image pixels, audio, video, or complex 3D geometry.
+- No model binaries are bundled in the repository.
 
 ## Build an APK
 
-Open the **Actions** tab and select **Android APK**. Successful runs upload a debug APK artifact named `CYN-debug-apk`.
+Open the **Actions** tab and select **Android APK**. A successful run uploads a debug APK artifact named `CYN-debug-apk`. Native llama.cpp compilation takes longer than the previous UI-only build.
 
-## Architecture direction
+## Architecture
 
-- `app/`: Android UI, chat state, attachment and model-picker flows.
-- `runtime/` (future): local inference adapter behind a small interface.
-- `models/` (future): model metadata and compatibility checks, not model binaries.
-- `plugins/` (future): isolated optional tool integrations.
-
-The first milestone is a clean buildable Android base. Local text inference and multimodal inference are separate milestones and will be reported as such.
+- `app/`: Android UI, model library, attachment inspection, runtime adapter.
+- `third_party/llama.cpp/`: checked out by CI at a pinned upstream revision; not stored as a large vendored copy in this repository.
+- `plugins/`: future isolated tool integrations. GitHub write actions should require explicit user confirmation.
