@@ -10,11 +10,18 @@ permissions:
 
 jobs:
   build:
-    name: Build debug APK
+    name: Build debug APK with llama.cpp
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout CYN
         uses: actions/checkout@v4
+
+      - name: Checkout pinned llama.cpp runtime
+        uses: actions/checkout@v4
+        with:
+          repository: ggml-org/llama.cpp
+          ref: aa94f2086147cd4bfbcff818ce998dffce5fcb39
+          path: third_party/llama.cpp
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -22,13 +29,68 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up Android SDK, NDK and CMake
+        uses: android-actions/setup-android@v3
+
+      - name: Install native toolchain
+        run: sdkmanager "ndk;29.0.13113456" "cmake;3.31.6"
+
+      - name: Configure llama.cpp Android library
+        shell: bash
+        run: |
+          cat > third_party/llama.cpp/examples/llama.android/lib/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.library")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.arm.aichat"
+              compileSdk = 35
+              ndkVersion = "29.0.13113456"
+              defaultConfig {
+                  minSdk = 26
+                  ndk { abiFilters += listOf("arm64-v8a") }
+                  externalNativeBuild {
+                      cmake {
+                          arguments += "-DCMAKE_BUILD_TYPE=Release"
+                          arguments += "-DBUILD_SHARED_LIBS=ON"
+                          arguments += "-DLLAMA_BUILD_APP=OFF"
+                          arguments += "-DLLAMA_BUILD_COMMON=ON"
+                          arguments += "-DLLAMA_OPENSSL=OFF"
+                          arguments += "-DGGML_NATIVE=OFF"
+                          arguments += "-DGGML_BACKEND_DL=ON"
+                          arguments += "-DGGML_CPU_ALL_VARIANTS=ON"
+                          arguments += "-DGGML_LLAMAFILE=OFF"
+                      }
+                  }
+              }
+              externalNativeBuild {
+                  cmake {
+                      path = file("src/main/cpp/CMakeLists.txt")
+                      version = "3.31.6"
+                  }
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+              packaging { jniLibs { useLegacyPackaging = true } }
+          }
+          dependencies {
+              implementation("androidx.core:core-ktx:1.15.0")
+              implementation("androidx.datastore:datastore-preferences:1.1.1")
+              implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
+          }
+          EOF
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.9"
 
       - name: Build APK
-        run: gradle assembleDebug
+        run: gradle assembleDebug --stacktrace
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
