@@ -104,7 +104,7 @@ private fun CynHome() {
                 }
             }.getOrNull() ?: uri.lastPathSegment?.substringAfterLast('/') ?: "Selected file"
             if (displayName.lowercase().endsWith(".gguf")) {
-                runCatching { library.import(uri) }
+                runCatching { library.register(uri) }
                     .onSuccess { model ->
                         models.removeAll { it.uri == model.uri }
                         models.add(model)
