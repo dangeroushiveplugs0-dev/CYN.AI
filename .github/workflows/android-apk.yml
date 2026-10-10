@@ -52,6 +52,11 @@ jobs:
       - name: Configure llama.cpp Android library
         shell: bash
         run: |
+          RUNTIME_CPP="third_party/llama.cpp/examples/llama.android/lib/src/main/cpp/ai_chat.cpp"
+          sed -i 's/DEFAULT_CONTEXT_SIZE    = 8192/DEFAULT_CONTEXT_SIZE    = 2048/' "$RUNTIME_CPP"
+          sed -i 's/BATCH_SIZE              = 512/BATCH_SIZE              = 128/' "$RUNTIME_CPP"
+          grep -q 'DEFAULT_CONTEXT_SIZE    = 2048' "$RUNTIME_CPP"
+          grep -q 'BATCH_SIZE              = 128' "$RUNTIME_CPP"
           cat > third_party/llama.cpp/examples/llama.android/lib/build.gradle.kts <<'EOF'
           plugins {
               id("com.android.library")
