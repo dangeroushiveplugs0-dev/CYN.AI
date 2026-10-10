@@ -173,8 +173,10 @@ object AttachmentInspector {
             stream?.close()
             return FileInspection(name, mime, size, "PDF document", "PDF is larger than the safe local extraction limit of 24 MiB. It is retained as an attachment, but this pass skips text extraction to limit memory and storage use.")
         }
+        var stagingFile: java.io.File? = null
         val temp = runCatching {
             val file = java.io.File.createTempFile("cyn-pdf-", ".pdf", context.cacheDir)
+            stagingFile = file
             val copied = stream?.use { input ->
                 file.outputStream().use { output ->
                     val buffer = ByteArray(8192)
@@ -192,6 +194,7 @@ object AttachmentInspector {
             file to copied
         }.getOrElse {
             stream?.close()
+            stagingFile?.delete()
             return FileInspection(name, mime, size, "PDF document", "Could not safely stage PDF for text extraction: ${it.javaClass.simpleName}. The original attachment remains untouched.")
         }
         return try {
