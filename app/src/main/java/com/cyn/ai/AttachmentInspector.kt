@@ -198,13 +198,13 @@ object AttachmentInspector {
             return FileInspection(name, mime, size, "PDF document", "Could not safely stage PDF for text extraction: ${it.javaClass.simpleName}. The original attachment remains untouched.")
         }
         return try {
-            org.apache.pdfbox.android.PDFBoxResourceLoader.init(context.applicationContext)
-            org.apache.pdfbox.pdmodel.PDDocument.load(temp.first).use { document ->
+            com.tom_roush.pdfbox.android.PDFBoxResourceLoader.init(context.applicationContext)
+            com.tom_roush.pdfbox.pdmodel.PDDocument.load(temp.first).use { document ->
                 val pages = document.numberOfPages
                 if (pages == 0) {
                     FileInspection(name, mime, size, "PDF document", "PDF opened, but it contains no pages.")
                 } else {
-                    val stripper = org.apache.pdfbox.text.PDFTextStripper().apply {
+                    val stripper = com.tom_roush.pdfbox.text.PDFTextStripper().apply {
                         startPage = 1
                         endPage = minOf(pages, MAX_PDF_PAGES)
                     }
