@@ -29,11 +29,11 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK, NDK and CMake
-        uses: android-actions/setup-android@v3
-
       - name: Install native toolchain
-        run: sdkmanager "ndk;29.0.13113456" "cmake;3.31.6"
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;29.0.13113456" "cmake;3.31.6"
 
       - name: Configure llama.cpp Android library
         shell: bash
