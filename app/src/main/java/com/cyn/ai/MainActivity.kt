@@ -97,6 +97,7 @@ private fun CynHome() {
     var selectedModel by remember { mutableStateOf(models.firstOrNull()) }
     var runtimeStatus by remember { mutableStateOf("Import a GGUF model, then load it to start local inference.") }
     var isGenerating by remember { mutableStateOf(false) }
+    var isLoadingModel by remember { mutableStateOf(false) }
     val messages = remember {
         mutableStateListOf(
             ChatMessage("CYN local inference is connected to llama.cpp. Import and load a compatible GGUF model to begin.", false)
@@ -195,14 +196,20 @@ private fun CynHome() {
                             }
                         }
                         Button(
-                            enabled = selectedModel != null && !isGenerating,
+                            enabled = selectedModel != null && !isGenerating && !isLoadingModel,
                             onClick = {
                                 val model = selectedModel
                                 if (model != null) scope.launch {
+                                    isLoadingModel = true
                                     runtimeStatus = "Preparing ${model.name}… first load copies the model into app storage."
-                                    runCatching { runtime.loadModel(model) }
-                                        .onSuccess { runtimeStatus = "Model loaded. Replies run locally on this device." }
-                                        .onFailure { runtimeStatus = "Model load failed: ${it.message ?: "unknown error"}" }
+                                    try {
+                                        runtime.loadModel(model)
+                                        runtimeStatus = "Model loaded. Replies run locally on this device."
+                                    } catch (error: Throwable) {
+                                        runtimeStatus = "Model load failed: ${error.message ?: "unknown error"}"
+                                    } finally {
+                                        isLoadingModel = false
+                                    }
                                 }
                             }
                         ) { Text("Load selected model") }
@@ -270,7 +277,7 @@ private fun CynHome() {
                     shape = RoundedCornerShape(20.dp)
                 )
                 IconButton(
-                    enabled = !isGenerating,
+                    enabled = !isGenerating && !isLoadingModel,
                     onClick = {
                         val text = draft.trim()
                         if (text.isNotEmpty() || pickedName != null) {
