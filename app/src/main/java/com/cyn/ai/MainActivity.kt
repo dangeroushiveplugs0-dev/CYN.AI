@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -45,6 +46,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -52,6 +54,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import com.arm.aichat.InferenceEngine
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
@@ -85,11 +90,16 @@ private fun CynHome() {
     var showModels by remember { mutableStateOf(false) }
     var libraryMessage by remember { mutableStateOf<String?>(null) }
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val runtime = remember { LocalInferenceRuntime(context) }
     val library = remember { ModelLibrary(context) }
     val models = remember { mutableStateListOf<LocalModel>().apply { addAll(library.list()) } }
+    var selectedModel by remember { mutableStateOf(models.firstOrNull()) }
+    var runtimeStatus by remember { mutableStateOf("Import a GGUF model, then load it to start local inference.") }
+    var isGenerating by remember { mutableStateOf(false) }
     val messages = remember {
         mutableStateListOf(
-            ChatMessage("CYN is ready for its first build. Local model inference is the next integration milestone.", false)
+            ChatMessage("CYN local inference is connected to llama.cpp. Import and load a compatible GGUF model to begin.", false)
         )
     }
 
@@ -108,7 +118,8 @@ private fun CynHome() {
                     .onSuccess { model ->
                         models.removeAll { it.uri == model.uri }
                         models.add(model)
-                        libraryMessage = "Registered ${model.name}. Local inference is not connected yet."
+                        selectedModel = model
+                        libraryMessage = "Registered ${model.name}. Select Load model when ready."
                     }
                     .onFailure { libraryMessage = "Couldn't keep access to this file. Select it again." }
             } else {
@@ -156,6 +167,7 @@ private fun CynHome() {
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("MODEL LIBRARY", fontWeight = FontWeight.Bold, color = Color(0xFFB7F36B))
                         Text("No model is bundled. Import a GGUF from your phone storage.")
+                        Text(runtimeStatus, fontSize = 11.sp, color = Color(0xFFB7F36B))
                         Button(onClick = { filePicker.launch(arrayOf("*/*")) }) {
                             Icon(Icons.Default.Add, contentDescription = null)
                             Spacer(Modifier.size(6.dp))
@@ -168,7 +180,7 @@ private fun CynHome() {
                         }
                         models.forEach { model ->
                             Row(
-                                modifier = Modifier.fillMaxWidth().background(Color(0xFF24282A), RoundedCornerShape(10.dp)).padding(start = 10.dp, end = 2.dp),
+                                modifier = Modifier.fillMaxWidth().background(if (selectedModel?.uri == model.uri) Color(0xFF35452A) else Color(0xFF24282A), RoundedCornerShape(10.dp)).clickable { selectedModel = model }.padding(start = 10.dp, end = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Column(Modifier.weight(1f).padding(vertical = 8.dp)) {
@@ -182,7 +194,19 @@ private fun CynHome() {
                                 }) { Text("×", fontSize = 18.sp) }
                             }
                         }
-                        Text("Registered models are remembered, but not loaded for inference yet.", fontSize = 11.sp, color = Color.LightGray)
+                        Button(
+                            enabled = selectedModel != null && !isGenerating,
+                            onClick = {
+                                val model = selectedModel
+                                if (model != null) scope.launch {
+                                    runtimeStatus = "Preparing ${model.name}… first load copies the model into app storage."
+                                    runCatching { runtime.loadModel(model) }
+                                        .onSuccess { runtimeStatus = "Model loaded. Replies run locally on this device." }
+                                        .onFailure { runtimeStatus = "Model load failed: ${it.message ?: "unknown error"}" }
+                                }
+                            }
+                        ) { Text("Load selected model") }
+                        Text("Tap a model row to select it.", fontSize = 11.sp, color = Color.LightGray)
                         libraryMessage?.let { Text(it, fontSize = 11.sp, color = Color(0xFFB7F36B)) }
                     }
                 }
@@ -246,6 +270,7 @@ private fun CynHome() {
                     shape = RoundedCornerShape(20.dp)
                 )
                 IconButton(
+                    enabled = !isGenerating,
                     onClick = {
                         val text = draft.trim()
                         if (text.isNotEmpty() || pickedName != null) {
@@ -257,27 +282,48 @@ private fun CynHome() {
                                 (if (text.isNotEmpty()) "$text\n" else "") + "Attachment: $pickedName"
                             } else text
                             messages.add(ChatMessage(combined, true, inspection?.toModelContext(), attachmentUri))
-                            val reply = when {
-                                inspection == null && pickedName != null ->
-                                    "I couldn't inspect this attachment. Check that the file is still accessible and try attaching it again. The local AI runtime is not connected yet."
-                                inspection != null -> buildString {
-                                    appendLine("File inspection: ${inspection.name}")
-                                    appendLine("Type: ${inspection.kind} • ${inspection.mimeType}")
-                                    appendLine(inspection.summary)
-                                    if (inspection.extractedText.isNotBlank()) {
-                                        appendLine()
-                                        appendLine("Extracted preview:")
-                                        appendLine(inspection.extractedText.take(1800))
-                                    }
+                            val prompt = buildString {
+                                append(combined)
+                                inspection?.toModelContext()?.takeIf { it.isNotBlank() }?.let {
                                     appendLine()
-                                    append("This is local file inspection, not an AI-generated interpretation yet. The attachment metadata/context is now available for the inference integration; visual, audio, PDF, and complex 3D understanding need their compatible parsers/models.")
+                                    appendLine()
+                                    appendLine("[Local attachment inspection context]")
+                                    append(it)
                                 }
-                                else -> "The chat UI is active, but the local inference runtime is not connected yet."
                             }
-                            messages.add(ChatMessage(reply, false))
+                            val assistantIndex = messages.size
+                            messages.add(ChatMessage("Preparing local model…", false))
                             draft = ""
                             pickedFile = null
                             pickedName = null
+                            isGenerating = true
+                            scope.launch {
+                                val answer = StringBuilder()
+                                try {
+                                    val model = selectedModel
+                                        ?: throw IllegalStateException("Open the model manager and import/select a GGUF first.")
+                                    runtimeStatus = "Loading model if needed…"
+                                    runtime.loadModel(model)
+                                    runtimeStatus = "Generating locally…"
+                                    runtime.generate(prompt).collect { token ->
+                                        answer.append(token)
+                                        if (assistantIndex < messages.size) {
+                                            messages[assistantIndex] = ChatMessage(answer.toString(), false)
+                                        }
+                                    }
+                                    if (answer.isEmpty() && assistantIndex < messages.size) {
+                                        messages[assistantIndex] = ChatMessage("The model returned an empty response. Try a shorter prompt or another compatible GGUF.", false)
+                                    }
+                                    runtimeStatus = "Ready • inference ran on-device"
+                                } catch (error: Throwable) {
+                                    if (assistantIndex < messages.size) {
+                                        messages[assistantIndex] = ChatMessage("Local inference failed: ${error.message ?: error.javaClass.simpleName}", false)
+                                    }
+                                    runtimeStatus = "Runtime error: ${error.message ?: error.javaClass.simpleName}"
+                                } finally {
+                                    isGenerating = false
+                                }
+                            }
                         }
                     }
                 ) {
