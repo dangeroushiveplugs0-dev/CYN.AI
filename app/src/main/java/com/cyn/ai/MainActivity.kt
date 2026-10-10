@@ -55,7 +55,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
-private data class ChatMessage(val text: String, val fromUser: Boolean)
+private data class ChatMessage(val text: String, val fromUser: Boolean, val modelContext: String? = null, val attachmentUri: Uri? = null)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -249,11 +249,32 @@ private fun CynHome() {
                     onClick = {
                         val text = draft.trim()
                         if (text.isNotEmpty() || pickedName != null) {
+                            val attachmentUri = pickedFile
+                            val inspection = attachmentUri?.let { uri ->
+                                runCatching { AttachmentInspector.inspect(context, uri) }.getOrNull()
+                            }
                             val combined = if (pickedName != null) {
                                 (if (text.isNotEmpty()) "$text\n" else "") + "Attachment: $pickedName"
                             } else text
-                            messages.add(ChatMessage(combined, true))
-                            messages.add(ChatMessage("The chat UI is active, but the local inference runtime is not connected yet.", false))
+                            messages.add(ChatMessage(combined, true, inspection?.toModelContext(), attachmentUri))
+                            val reply = when {
+                                inspection == null && pickedName != null ->
+                                    "I couldn't inspect this attachment. Check that the file is still accessible and try attaching it again. The local AI runtime is not connected yet."
+                                inspection != null -> buildString {
+                                    appendLine("File inspection: ${inspection.name}")
+                                    appendLine("Type: ${inspection.kind} • ${inspection.mimeType}")
+                                    appendLine(inspection.summary)
+                                    if (inspection.extractedText.isNotBlank()) {
+                                        appendLine()
+                                        appendLine("Extracted preview:")
+                                        appendLine(inspection.extractedText.take(1800))
+                                    }
+                                    appendLine()
+                                    append("This is local file inspection, not an AI-generated interpretation yet. The attachment metadata/context is now available for the inference integration; visual, audio, PDF, and complex 3D understanding need their compatible parsers/models.")
+                                }
+                                else -> "The chat UI is active, but the local inference runtime is not connected yet."
+                            }
+                            messages.add(ChatMessage(reply, false))
                             draft = ""
                             pickedFile = null
                             pickedName = null
