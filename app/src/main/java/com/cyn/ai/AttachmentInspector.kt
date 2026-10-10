@@ -109,6 +109,8 @@ object AttachmentInspector {
 
     private fun inspectZip(stream: java.io.InputStream?, name: String, mime: String, size: Long, kind: String): FileInspection {
         val entries = mutableListOf<String>()
+        val extracted = mutableListOf<String>()
+        var extractedBytes = 0
         var truncated = false
         runCatching {
             stream?.use { raw ->
@@ -116,14 +118,52 @@ object AttachmentInspector {
                     while (entries.size < MAX_ARCHIVE_ENTRIES) {
                         val entry = zip.nextEntry ?: break
                         entries.add((if (entry.isDirectory) "[dir] " else "") + entry.name)
+                        val officeTextEntry = !entry.isDirectory && isOfficeTextEntry(entry.name)
+                        if (officeTextEntry && extractedBytes < MAX_TEXT_BYTES) {
+                            val remaining = MAX_TEXT_BYTES - extractedBytes
+                            val output = ByteArrayOutputStream()
+                            val buffer = ByteArray(2048)
+                            var entryBytes = 0
+                            while (entryBytes < remaining) {
+                                val count = zip.read(buffer, 0, minOf(buffer.size, remaining - entryBytes))
+                                if (count <= 0) break
+                                output.write(buffer, 0, count)
+                                entryBytes += count
+                            }
+                            val decoded = output.toByteArray().toString(Charsets.UTF_8)
+                            val readable = decoded.replace(Regex("<[^>]*>"), " ")
+                                .replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+                                .replace("&quot;", "\"").replace("&apos;", "'")
+                                .replace(Regex("\\s+"), " ").trim()
+                            if (readable.isNotBlank()) {
+                                extracted.add("[" + entry.name + "]\n" + readable.take(8000))
+                                extractedBytes += entryBytes
+                            }
+                        }
                         zip.closeEntry()
                     }
                     truncated = entries.size == MAX_ARCHIVE_ENTRIES
                 }
             }
-        }.onFailure { entries.add("Could not read archive directory: ${it.javaClass.simpleName}") }
+        }.onFailure { entries.add("Could not read archive directory: " + it.javaClass.simpleName) }
         val listing = entries.joinToString("\n")
-        return FileInspection(name, mime, size, kind, "Archive/container directory listing:${if (truncated) " (first $MAX_ARCHIVE_ENTRIES entries only)" else ""}", listing)
+        val text = extracted.joinToString("\n\n")
+        val summary = "Archive/container directory listing:" +
+            (if (truncated) " (first " + MAX_ARCHIVE_ENTRIES + " entries only)" else "") +
+            (if (text.isNotBlank()) " Office-document text was extracted within a " + MAX_TEXT_BYTES + "-byte safety limit." else "")
+        return FileInspection(name, mime, size, kind, summary, if (text.isNotBlank()) text else listing)
+    }
+
+    private fun isOfficeTextEntry(path: String): Boolean {
+        val normalized = path.lowercase(Locale.ROOT)
+        return normalized == "word/document.xml" ||
+            normalized == "word/footnotes.xml" ||
+            normalized == "word/endnotes.xml" ||
+            normalized == "xl/sharedstrings.xml" ||
+            normalized == "xl/workbook.xml" ||
+            normalized.matches(Regex("ppt/slides/slide[0-9]+\\.xml")) ||
+            normalized == "content.xml" ||
+            normalized == "meta.xml"
     }
 
     private fun inspectGlb(stream: java.io.InputStream?, name: String, mime: String, size: Long): FileInspection {
